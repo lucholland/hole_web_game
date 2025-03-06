@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hole Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #f0f0f0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            flex-direction: column;
+        }
+        canvas {
+            border: 2px solid #333;
+            background-color: #fff;
+            /* Remove fixed width/height from here */
+            max-width: 80%; /* Limit maximum width to 80% of viewport */
+            max-height: 80vh; /* Limit maximum height to 80% of viewport height */
+            width: 80%; /* Set width to 80% of container */
+            height: auto; /* Height will adjust proportionally */
+        }
+        #game-info {
+            margin-top: 10px;
+            font-family: Arial, sans-serif;
+            text-align: center;
+            width: 80%; /* Match canvas width */
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <div id="game-info">
+        <p>Score: <span id="score">0</span> | Hole Size: <span id="holeSize">10</span></p>
+        <p>Move the mouse to control the hole. Swallow objects to grow!</p>
+    </div>
+    
+    <script>
+        // Get canvas and context
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas size dynamically based on window size
+        function resizeCanvas() {
+            // Calculate canvas size (80% of window size)
+            const windowWidth = window.innerWidth;
+            const windowHeight = window.innerHeight;
+            
+            // Determine the dimensions keeping aspect ratio
+            const aspectRatio = 3/2; // Width/Height ratio (you can adjust this)
+            let canvasWidth, canvasHeight;
+            
+            if (windowWidth / windowHeight > aspectRatio) {
+                // Window is wider than our desired aspect ratio
+                canvasHeight = windowHeight * 0.8;
+                canvasWidth = canvasHeight * aspectRatio;
+            } else {
+                // Window is taller than our desired aspect ratio
+                canvasWidth = windowWidth * 0.8;
+                canvasHeight = canvasWidth / aspectRatio;
+            }
+            
+            // Apply the calculated dimensions
+            canvas.width = canvasWidth;
+            canvas.height = canvasHeight;
+            
+            // If we're in the middle of a game, redraw immediately
+            if (typeof hole !== 'undefined') {
+                // Adjust hole position when resizing
+                hole.x = (hole.x / prevWidth) * canvas.width;
+                hole.y = (hole.y / prevHeight) * canvas.height;
+                
+                // Adjust objects positions
+                for (let obj of objects) {
+                    obj.x = (obj.x / prevWidth) * canvas.width;
+                    obj.y = (obj.y / prevHeight) * canvas.height;
+                }
+                
+                draw();
+            }
+            
+            // Store current dimensions for future reference
+            prevWidth = canvas.width;
+            prevHeight = canvas.height;
+        }
+        
+        // Track previous dimensions for scaling
+        let prevWidth = 0;
+        let prevHeight = 0;
+        
+        // Handle window resize
+        window.addEventListener('resize', resizeCanvas);
+        
+        // Initial sizing
+        resizeCanvas();
+        
+        // Game variables
+        let score = 0;
+        let objects = [];
+        let hole = {
+            x: canvas.width / 2,
+            y: canvas.height / 2,
+            radius: canvas.width * 0.02, // Make hole size relative to canvas
+            color: '#333'
+        };
+        
+        // Colors for objects
+        const colors = ['#FF5733', '#33FF57', '#3357FF', '#FF33F5', '#F5FF33'];
+        
+        // Initialize the game
+        function init() {
+            // Create initial objects
+            for (let i = 0; i < 15; i++) {
+                spawnObject();
+            }
+            
+            // Set up event listeners
+            canvas.addEventListener('mousemove', moveHole);
+            canvas.addEventListener('touchmove', moveTouchHole);
+            
+            // Start game loop
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Spawn a new object at a random position
+        function spawnObject() {
+            const minSize = canvas.width * 0.01;
+            const maxSize = canvas.width * 0.05;
+            const size = Math.random() * (maxSize - minSize) + minSize;
+            
+            // Make sure objects don't spawn directly over the hole
+            let objX, objY;
+            let validPosition = false;
+            
+            while (!validPosition) {
+                objX = Math.random() * (canvas.width - size * 2) + size;
+                objY = Math.random() * (canvas.height - size * 2) + size;
+                
+                // Check distance from hole
+                const dist = Math.sqrt(Math.pow(objX - hole.x, 2) + Math.pow(objY - hole.y, 2));
+                if (dist > hole.radius + size + 10) {
+                    validPosition = true;
+                }
+            }
+            
+            objects.push({
+                x: objX,
+                y: objY,
+                size: size,
+                color: colors[Math.floor(Math.random() * colors.length)],
+                falling: false,
+                fallSpeed: 0,
+                rotation: 0,
+                rotationSpeed: (Math.random() - 0.5) * 0.2
+            });
+        }
+        
+        // Move the hole based on mouse position
+        function moveHole(e) {
+            const rect = canvas.getBoundingClientRect();
+            hole.x = (e.clientX - rect.left) * (canvas.width / rect.width);
+            hole.y = (e.clientY - rect.top) * (canvas.height / rect.height);
+        }
+        
+        // Move the hole based on touch position
+        function moveTouchHole(e) {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            hole.x = (e.touches[0].clientX - rect.left) * (canvas.width / rect.width);
+            hole.y = (e.touches[0].clientY - rect.top) * (canvas.height / rect.height);
+        }
+        
+        // Check if an object is touching the hole
+        function checkCollision(obj) {
+            const distance = Math.sqrt(Math.pow(obj.x - hole.x, 2) + Math.pow(obj.y - hole.y, 2));
+            return distance < hole.radius + (obj.size / 2);
+        }
+        
+        // Update game state
+        function update() {
+            // Check for collisions with the hole
+            for (let i = 0; i < objects.length; i++) {
+                const obj = objects[i];
+                
+                // If object is touching the hole and is small enough to fall in
+                if (checkCollision(obj) && obj.size < hole.radius * 1.5) {
+                    if (!obj.falling) {
+                        obj.falling = true;
+                    }
+                }
+                
+                // Update falling objects
+                if (obj.falling) {
+                    obj.fallSpeed += 0.2;
+                    obj.size -= 0.5;
+                    obj.rotation += obj.rotationSpeed;
+                    
+                    // Move object toward center of hole
+                    const dx = hole.x - obj.x;
+                    const dy = hole.y - obj.y;
+                    obj.x += dx * 0.1;
+                    obj.y += dy * 0.1;
+                    
+                    // If object is completely swallowed
+                    if (obj.size <= 0) {
+                        // Increase score and hole size
+                        score++;
+                        hole.radius += canvas.width * 0.001; // Make growth relative to canvas
+                        
+                        // Remove object and spawn a new one
+                        objects.splice(i, 1);
+                        spawnObject();
+                        i--;
+                        
+                        // Update score display
+                        document.getElementById('score').textContent = score;
+                        document.getElementById('holeSize').textContent = Math.round(hole.radius);
+                    }
+                }
+            }
+            
+            // If there are too few objects, spawn more
+            while (objects.length < 15) {
+                spawnObject();
+            }
+        }
+        
+        // Draw everything
+        function draw() {
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw objects
+            for (let i = 0; i < objects.length; i++) {
+                const obj = objects[i];
+                
+                ctx.save();
+                ctx.translate(obj.x, obj.y);
+                ctx.rotate(obj.rotation);
+                
+                // Draw a square for the object
+                ctx.fillStyle = obj.color;
+                ctx.fillRect(-obj.size / 2, -obj.size / 2, obj.size, obj.size);
+                
+                ctx.restore();
+            }
+            
+            // Draw hole (black circle with inner shadow)
+            ctx.save();
+            
+            // Create clipping region for the hole
+            ctx.beginPath();
+            ctx.arc(hole.x, hole.y, hole.radius, 0, Math.PI * 2);
+            ctx.clip();
+            
+            // Fill with darker color to represent depth
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.restore();
+            
+            // Draw hole outline
+            ctx.beginPath();
+            ctx.arc(hole.x, hole.y, hole.radius, 0, Math.PI * 2);
+            ctx.strokeStyle = '#555';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+        
+        // Game loop
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start the game
+        init();
+    </script>
+</body>
+</html>
